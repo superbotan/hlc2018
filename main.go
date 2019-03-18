@@ -4,12 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"bytes"
 	"os/signal"
 	"strings"
 	"syscall"
 
 	"github.com/prometheus/common/log"
 	"github.com/valyala/fasthttp"
+)
+
+var (
+	isFirstPhaseFinish = false
+	
+	filterAccess = sync.RWMutex{}
+	filtersCache = map[string][]byte{}
+	
+	groupAccess = sync.RWMutex{}
+	groupsCache = map[string][]byte{}
 )
 
 func fastHTTPHandler(ctx *fasthttp.RequestCtx) {
@@ -82,6 +93,20 @@ func main() {
 }
 
 func accountsFilter(ctx *fasthttp.RequestCtx) {
+	
+	cacheKey := getCacheKey(ctx.QueryArgs())
+	if isFirstPhaseFinish {
+
+		filterAccess.RLock()
+		res, ok := filtersCache[cacheKey]
+		filterAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
+	}
 
 	fa, err := accountsFilterGet(ctx)
 	if err != nil {
@@ -103,10 +128,30 @@ func accountsFilter(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		filterAccess.Lock()
+		filtersCache[cacheKey] = b
+		filterAccess.Unlock()
+	}
 
 }
 
 func accountsGroup(ctx *fasthttp.RequestCtx) {
+	
+	cacheKey := getCacheKey(ctx.QueryArgs())
+	if isFirstPhaseFinish {
+
+		groupAccess.RLock()
+		res, ok := groupsCache[cacheKey]
+		groupAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
+	}
 
 	fa, err := groupFilterGet(ctx)
 	if err != nil {
@@ -128,6 +173,12 @@ func accountsGroup(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		groupAccess.Lock()
+		groupsCache[cacheKey] = b
+		groupAccess.Unlock()
+	}
 }
 
 func accountsNew(ctx *fasthttp.RequestCtx) {
@@ -137,6 +188,7 @@ func accountsNew(ctx *fasthttp.RequestCtx) {
 	}
 
 	accounts_add(ctx)
+	isFirstPhaseFinish = true
 }
 func accountsLikes(ctx *fasthttp.RequestCtx) {
 	if string(ctx.Method()) != "POST" {
@@ -226,4 +278,16 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+}
+
+func getCacheKey(args *fasthttp.Args) string {
+	cacheKey := bytes.Buffer{}
+	args.VisitAll(func(k, v []byte) {
+		if string(k) == "query_id" {
+			return
+		}
+		cacheKey.Write(k)
+		cacheKey.Write(v)
+	})
+	return cacheKey.String()
 }
