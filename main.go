@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"bytes"
+	"regexp"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -14,6 +15,8 @@ import (
 )
 
 var (
+	urlRE = regexp.MustCompile("/accounts/([0-9]+)/.+")
+	
 	isFirstPhaseFinish = false
 	
 	filterAccess = sync.RWMutex{}
@@ -100,8 +103,10 @@ func main() {
 
 func accountsFilter(ctx *fasthttp.RequestCtx) {
 	
-	cacheKey := getCacheKey(ctx.QueryArgs())
+	cacheKey := ""
 	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
 
 		filterAccess.RLock()
 		res, ok := filtersCache[cacheKey]
@@ -145,8 +150,10 @@ func accountsFilter(ctx *fasthttp.RequestCtx) {
 
 func accountsGroup(ctx *fasthttp.RequestCtx) {
 	
-	cacheKey := getCacheKey(ctx.QueryArgs())
+	cacheKey := ""
 	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
 
 		groupAccess.RLock()
 		res, ok := groupsCache[cacheKey]
@@ -221,8 +228,11 @@ func accountsSuggest(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	
-	cacheKey := getCacheKey(ctx.QueryArgs())
+	cacheKey := ""
 	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+		cacheKey += getUserFromURL(string(ctx.Path()))
 
 		suggestAccess.RLock()
 		res, ok := suggestsCache[cacheKey]
@@ -277,8 +287,11 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	
-	cacheKey := getCacheKey(ctx.QueryArgs())
+	cacheKey := ""
 	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+		cacheKey += getUserFromURL(string(ctx.Path()))
 
 		recommendAccess.RLock()
 		res, ok := recommendsCache[cacheKey]
@@ -324,6 +337,14 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 		recommendsCache[cacheKey] = b
 		recommendAccess.Unlock()
 	}
+}
+
+func getUserFromURL(url string) string {
+	matches := urlRE.FindStringSubmatch(url)
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
 }
 
 func getCacheKey(args *fasthttp.Args) string {
