@@ -21,6 +21,12 @@ var (
 	
 	groupAccess = sync.RWMutex{}
 	groupsCache = map[string][]byte{}
+	
+	recommendAccess = sync.RWMutex{}
+	recommendsCache = map[string][]byte{}
+	
+	suggestAccess = sync.RWMutex{}
+	suggestsCache = map[string][]byte{}
 )
 
 func fastHTTPHandler(ctx *fasthttp.RequestCtx) {
@@ -214,6 +220,20 @@ func accountsSuggest(ctx *fasthttp.RequestCtx) {
 		ctx.Response.SetStatusCode(404)
 		return
 	}
+	
+	cacheKey := getCacheKey(ctx.QueryArgs())
+	if isFirstPhaseFinish {
+
+		suggestAccess.RLock()
+		res, ok := suggestsCache[cacheKey]
+		suggestAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
+	}
 
 	fa, err := suggestFilterGet(ctx)
 	if err != nil {
@@ -242,6 +262,12 @@ func accountsSuggest(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		suggestAccess.Lock()
+		suggestsCache[cacheKey] = b
+		suggestAccess.Unlock()
+	}
 }
 
 func accountsRecommend(ctx *fasthttp.RequestCtx) {
@@ -249,6 +275,20 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 	if string(ctx.Method()) != "GET" {
 		ctx.Response.SetStatusCode(404)
 		return
+	}
+	
+	cacheKey := getCacheKey(ctx.QueryArgs())
+	if isFirstPhaseFinish {
+
+		recommendAccess.RLock()
+		res, ok := recommendsCache[cacheKey]
+		recommendAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
 	}
 
 	fa, err := recommendFilterGet(ctx)
@@ -278,6 +318,12 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		recommendAccess.Lock()
+		recommendsCache[cacheKey] = b
+		recommendAccess.Unlock()
+	}
 }
 
 func getCacheKey(args *fasthttp.Args) string {
