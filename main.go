@@ -4,12 +4,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"bytes"
+	"regexp"
 	"os/signal"
 	"strings"
 	"syscall"
 
 	"github.com/prometheus/common/log"
 	"github.com/valyala/fasthttp"
+)
+
+var (
+	urlRE = regexp.MustCompile("/accounts/([0-9]+)/.+")
+	
+	isFirstPhaseFinish = false
+	
+	filterAccess = sync.RWMutex{}
+	filtersCache = map[string][]byte{}
+	
+	groupAccess = sync.RWMutex{}
+	groupsCache = map[string][]byte{}
+	
+	recommendAccess = sync.RWMutex{}
+	recommendsCache = map[string][]byte{}
+	
+	suggestAccess = sync.RWMutex{}
+	suggestsCache = map[string][]byte{}
 )
 
 func fastHTTPHandler(ctx *fasthttp.RequestCtx) {
@@ -82,6 +102,22 @@ func main() {
 }
 
 func accountsFilter(ctx *fasthttp.RequestCtx) {
+	
+	cacheKey := ""
+	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+
+		filterAccess.RLock()
+		res, ok := filtersCache[cacheKey]
+		filterAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
+	}
 
 	fa, err := accountsFilterGet(ctx)
 	if err != nil {
@@ -103,10 +139,32 @@ func accountsFilter(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		filterAccess.Lock()
+		filtersCache[cacheKey] = b
+		filterAccess.Unlock()
+	}
 
 }
 
 func accountsGroup(ctx *fasthttp.RequestCtx) {
+	
+	cacheKey := ""
+	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+
+		groupAccess.RLock()
+		res, ok := groupsCache[cacheKey]
+		groupAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
+	}
 
 	fa, err := groupFilterGet(ctx)
 	if err != nil {
@@ -128,6 +186,12 @@ func accountsGroup(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		groupAccess.Lock()
+		groupsCache[cacheKey] = b
+		groupAccess.Unlock()
+	}
 }
 
 func accountsNew(ctx *fasthttp.RequestCtx) {
@@ -137,6 +201,7 @@ func accountsNew(ctx *fasthttp.RequestCtx) {
 	}
 
 	accounts_add(ctx)
+	isFirstPhaseFinish = true
 }
 func accountsLikes(ctx *fasthttp.RequestCtx) {
 	if string(ctx.Method()) != "POST" {
@@ -161,6 +226,23 @@ func accountsSuggest(ctx *fasthttp.RequestCtx) {
 	if string(ctx.Method()) != "GET" {
 		ctx.Response.SetStatusCode(404)
 		return
+	}
+	
+	cacheKey := ""
+	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+		cacheKey += getUserFromURL(string(ctx.Path()))
+
+		suggestAccess.RLock()
+		res, ok := suggestsCache[cacheKey]
+		suggestAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
 	}
 
 	fa, err := suggestFilterGet(ctx)
@@ -190,6 +272,12 @@ func accountsSuggest(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		suggestAccess.Lock()
+		suggestsCache[cacheKey] = b
+		suggestAccess.Unlock()
+	}
 }
 
 func accountsRecommend(ctx *fasthttp.RequestCtx) {
@@ -197,6 +285,23 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 	if string(ctx.Method()) != "GET" {
 		ctx.Response.SetStatusCode(404)
 		return
+	}
+	
+	cacheKey := ""
+	if isFirstPhaseFinish {
+
+		cacheKey = getCacheKey(ctx.QueryArgs())
+		cacheKey += getUserFromURL(string(ctx.Path()))
+
+		recommendAccess.RLock()
+		res, ok := recommendsCache[cacheKey]
+		recommendAccess.RUnlock()
+
+		if ok {
+			ctx.SetContentType("application/json")
+			ctx.Write(res)
+			return
+		}
 	}
 
 	fa, err := recommendFilterGet(ctx)
@@ -226,4 +331,30 @@ func accountsRecommend(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Add("content-type", "application/json")
 
 	fmt.Fprint(ctx, string(b))
+	
+	if isFirstPhaseFinish {
+		recommendAccess.Lock()
+		recommendsCache[cacheKey] = b
+		recommendAccess.Unlock()
+	}
+}
+
+func getUserFromURL(url string) string {
+	matches := urlRE.FindStringSubmatch(url)
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
+}
+
+func getCacheKey(args *fasthttp.Args) string {
+	cacheKey := bytes.Buffer{}
+	args.VisitAll(func(k, v []byte) {
+		if string(k) == "query_id" {
+			return
+		}
+		cacheKey.Write(k)
+		cacheKey.Write(v)
+	})
+	return cacheKey.String()
 }
